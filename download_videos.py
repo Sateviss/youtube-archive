@@ -16,7 +16,7 @@ from youtube_dl.utils import date_from_str
 from config import *
 
 
-logging.basicConfig(format="%(asctime)s [%(levelname)s] (%(name)s): %(message)s", datefmt='%Y-%m-%d %H:%M:%S', level=LOGLEVEL)
+logging.basicConfig(format="%(asctime)s [%(levelname)s] (%(name)s): %(message)s", datefmt="%Y-%m-%d %H:%M:%S", level=LOGLEVEL)
 
 if __name__ == "__main__":
     # Load a list of channels for download from CHANNEL_LIST
@@ -59,9 +59,9 @@ if __name__ == "__main__":
                     "title": video["title"],
                     "url": video["url"]
                 }})
-                
+
             channel.update({"title": data["title"], "videos": videos})
-    
+
     logging.info("Downloaded video list")
     dv = json.load(open(DOWNLOADED_VIDEOS)) if os.path.exists(DOWNLOADED_VIDEOS) else {}
 
@@ -78,7 +78,7 @@ if __name__ == "__main__":
 
             # Update the title, just in case
             dv[url]["title"] = channels[url]["title"]
-            # For each video in the CURRENT list 
+            # For each video in the CURRENT list
             for video_id in channels[url]["videos"].keys():
 
                 # If it has a status of some kind
@@ -106,7 +106,7 @@ if __name__ == "__main__":
             }})
             for video_id in channels[url]["videos"].keys():
                 get_info_list.append((url, video_id))
-    
+
     logging.info("Staged {} videos for download".format(len(download_list)))
     logging.info("Updating information about {} videos in {} threads...".format(len(get_info_list), DOWNLOAD_THREADS))
 
@@ -114,63 +114,85 @@ if __name__ == "__main__":
 
     def get_info(info):
         url, video_id = info
-        opts = {
-            "quiet": True
-        }
-        with youtube_dl.YoutubeDL(opts) as ytd:
-            info = ytd.extract_info(channels[url]["videos"][video_id]["url"], download=False)
-            lock.acquire()
-            if video_id in dv[url]["videos"].keys():
-                dv[url]["videos"][video_id]["title"] = info["title"]
-                dv[url]["videos"][video_id]["date"] = info["upload_date"]
-                dv[url]["videos"][video_id]["url"] = info["webpage_url"]
-            else:
-                dv[url]["videos"].update({video_id: 
-                    {
-                        "title": info["title"],
-                        "date": info["upload_date"],
-                        "url": info["webpage_url"],
-                        "status": "checked"
-                    }
-                })
-            with open(DOWNLOADED_VIDEOS, "w") as dvf:
-                json.dump(dv, dvf, indent=2)
 
-            if date_from_str(channels[url]["date_from"]) < date_from_str(info["upload_date"]) < date_from_str(channels[url]["date_to"]):
-                logging.debug("Added \"{}\" from \"{}\" to download_list".format(info["title"], channels[url]["title"]))
-                download_list.append((url, video_id))
-            lock.release()
-    
+        extracted = 1
+        for code in BYPASS_CODES:
+            opts = {"quiet": True, "geo_bypass": True, "geo_bypass_country": code}
+            try:
+                with youtube_dl.YoutubeDL(opts) as ytd:
+                    extracted = ytd.extract_info(channels[url]["videos"][video_id]["url"], download=False)
+                break
+            except:
+                logging.warning("\"{}\" from \"{}\" is blocked in {}".format(video_id, channels[url]["title"], code))
+                continue
+        if extracted == 1:
+            logging.warning("\"{}\" from \"{}\" is blocked in all countries on the list".format(video_id, channels[url]["title"]))
+            return
+                 
+        lock.acquire()
+        if video_id in dv[url]["videos"].keys():
+            dv[url]["videos"][video_id]["title"] = extracted["title"]
+            dv[url]["videos"][video_id]["date"] = extracted["upload_date"]
+            dv[url]["videos"][video_id]["url"] = extracted["webpage_url"]
+        else:
+            dv[url]["videos"].update({video_id: 
+                {
+                    "title": extracted["title"],
+                    "date": extracted["upload_date"],
+                    "url": extracted["webpage_url"],
+                    "status": "checked"
+                }
+            })
+        with open(DOWNLOADED_VIDEOS, "w") as dvf:
+            json.dump(dv, dvf, indent=2)
+
+        if date_from_str(channels[url]["date_from"]) < date_from_str(extracted["upload_date"]) < date_from_str(channels[url]["date_to"]):
+            logging.debug("Added \"{}\" from \"{}\" to download_list".format(extracted["title"], channels[url]["title"]))
+            download_list.append((url, video_id))
+        else:
+            logging.debug("\"{}\" from \"{}\" is not in date range, skipping".format(extracted["title"], channels[url]["title"]))
+        lock.release()
+
     with ThreadPool(DOWNLOAD_THREADS) as p:
         p.map(get_info, get_info_list)
 
     logging.info("Downloading {} videos in {} threads...".format(len(download_list), DOWNLOAD_THREADS))
 
     def download(info):
-        
-        # DV
-
         channel_url, video_id = info
-        opts.update({"logger": logging})
-        with youtube_dl.YoutubeDL(DOWNLOAD_OPTIONS) as ytd:
+        lock.acquire()
+        dv[channel_url]["videos"][video_id]["status"] = "downloading"
+        with open(DOWNLOADED_VIDEOS, "w") as dvf:
+            json.dump(dv, dvf, indent=2)
+        lock.release()
+        try:
+
+            extracted = 1
+            for code in BYPASS_CODES:
+                opts = {"quiet": True, "geo_bypass": True, "geo_bypass_country": code}
+                try:
+                    opts.update({"logger": logging, "geo_bypass_country": code})
+                    with youtube_dl.YoutubeDL(DOWNLOAD_OPTIONS) as ytd:
+                        extracted = ytd.download([dv[channel_url]["videos"][video_id]["url"]])
+                    break
+                except:
+                    logging.warning("\"{}\" from \"{}\" is blocked in {}".format(video_id, channels[url]["title"], code))
+                    continue
+            if extracted == 1:
+                logging.warning("\"{}\" from \"{}\" is blocked in all countries on the list".format(video_id, channels[url]["title"]))
+                return
+
             lock.acquire()
-            dv[channel_url]["videos"][video_id]["status"] = "downloading"
+            dv[channel_url]["videos"][video_id]["status"] = "downloaded"
             with open(DOWNLOADED_VIDEOS, "w") as dvf:
                 json.dump(dv, dvf, indent=2)
-            try:
-                lock.release()
-                ytd.download([dv[channel_url]["videos"][video_id]["url"]])
-                lock.acquire()
-                dv[channel_url]["videos"][video_id]["status"] = "downloaded"
-                with open(DOWNLOADED_VIDEOS, "w") as dvf:
-                    json.dump(dv, dvf, indent=2)
-                lock.release()
-            except Exception as e:
-                logging.error("An error occured while downloading {}".format(dv[channel_url]["videos"][video_id]["title"]))
-                logging.error(e)
-                lock.release()
+            lock.release()
+    
+        except Exception as e:
+            logging.error("An error occured while downloading {}".format(dv[channel_url]["videos"][video_id]["title"]))
+            logging.error(e)
 
     with ThreadPool(DOWNLOAD_THREADS) as p:
         p.map(download, download_list)
-    
+
     logging.info("Download finished, bye!")

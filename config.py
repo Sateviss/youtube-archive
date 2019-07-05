@@ -22,8 +22,17 @@ DOWNLOAD_OPTIONS = {
     ],
     'writesubtitles': True,
     'allsubtitles': True,
-    'writeinfojson': True
+    'writeinfojson': True,
+    'continuedl': True
 }
 
-DOWNLOAD_THREADS = 4
+BYPASS_CODES = [
+    "BY",
+    "US",
+    "UK",
+    "RU",
+    "NL"
+]
+
+DOWNLOAD_THREADS = 2
 LOGLEVEL = logging.DEBUG
