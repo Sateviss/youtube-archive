@@ -122,7 +122,7 @@ if __name__ == "__main__":
                 with youtube_dl.YoutubeDL(opts) as ytd:
                     extracted = ytd.extract_info(channels[url]["videos"][video_id]["url"], download=False)
                 break
-            except:
+            except youtube_dl.DownloadError:
                 logging.warning("\"{}\" from \"{}\" is blocked in {}".format(video_id, channels[url]["title"], code))
                 continue
         if extracted == 1:
@@ -166,16 +166,23 @@ if __name__ == "__main__":
             json.dump(dv, dvf, indent=2)
         lock.release()
         try:
+            def my_hook(d):
+                if d["status"] == "finished":
+                    logging.info("Done downloading {}, now converting ...".format(dv[channel_url]["videos"][video_id]["title"]))
 
             extracted = 1
             for code in BYPASS_CODES:
-                opts = {"quiet": True, "geo_bypass": True, "geo_bypass_country": code}
+                opts = DOWNLOAD_OPTIONS
                 try:
-                    opts.update({"logger": logging, "geo_bypass_country": code})
-                    with youtube_dl.YoutubeDL(DOWNLOAD_OPTIONS) as ytd:
+                    opts.update({
+                        "logger": logging,
+                        "geo_bypass": True,
+                        "geo_bypass_country": code,
+                        "progress_hooks": [my_hook]})
+                    with youtube_dl.YoutubeDL(opts) as ytd:
                         extracted = ytd.download([dv[channel_url]["videos"][video_id]["url"]])
                     break
-                except:
+                except youtube_dl.DownloadError:
                     logging.warning("\"{}\" from \"{}\" is blocked in {}".format(video_id, channels[url]["title"], code))
                     continue
             if extracted == 1:
